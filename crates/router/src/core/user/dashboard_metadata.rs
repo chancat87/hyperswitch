@@ -1,25 +1,34 @@
+use std::str::FromStr;
+
 use api_models::user::dashboard_metadata::{self as api, GetMultipleMetaDataPayload};
+#[cfg(feature = "email")]
+use common_enums::EntityType;
+use common_utils::pii;
 use diesel_models::{
     enums::DashboardMetadata as DBEnum, user::dashboard_metadata::DashboardMetadata,
 };
-use error_stack::ResultExt;
+use error_stack::{report, ResultExt};
+#[cfg(feature = "email")]
+use masking::ExposeInterface;
+use masking::PeekInterface;
 #[cfg(feature = "email")]
 use router_env::logger;
 
-#[cfg(feature = "email")]
-use crate::services::email::types as email_types;
 use crate::{
     core::errors::{UserErrors, UserResponse, UserResult},
-    routes::AppState,
+    routes::{app::ReqState, SessionState},
     services::{authentication::UserFromToken, ApplicationResponse},
-    types::domain::{user::dashboard_metadata as types, MerchantKeyStore},
+    types::domain::{self, user::dashboard_metadata as types, MerchantKeyStore},
     utils::user::dashboard_metadata as utils,
 };
+#[cfg(feature = "email")]
+use crate::{services::email::types as email_types, utils::user::theme as theme_utils};
 
 pub async fn set_metadata(
-    state: AppState,
+    state: SessionState,
     user: UserFromToken,
     request: api::SetMetaDataRequest,
+    _req_state: ReqState,
 ) -> UserResponse<()> {
     let metadata_value = parse_set_request(request)?;
     let metadata_key = DBEnum::from(&metadata_value);
@@ -29,10 +38,12 @@ pub async fn set_metadata(
     Ok(ApplicationResponse::StatusOk)
 }
 
+#[cfg(feature = "v1")]
 pub async fn get_multiple_metadata(
-    state: AppState,
+    state: SessionState,
     user: UserFromToken,
     request: GetMultipleMetaDataPayload,
+    _req_state: ReqState,
 ) -> UserResponse<Vec<api::GetMetaDataResponse>> {
     let metadata_keys: Vec<DBEnum> = request.results.into_iter().map(parse_get_request).collect();
 
@@ -42,11 +53,11 @@ pub async fn get_multiple_metadata(
     for key in metadata_keys {
         let data = metadata.iter().find(|ele| ele.data_key == key);
         let resp;
-        if data.is_none() && utils::is_backfill_required(&key) {
+        if data.is_none() && utils::is_backfill_required(key) {
             let backfill_data = backfill_metadata(&state, &user, &key).await?;
-            resp = into_response(backfill_data.as_ref(), &key)?;
+            resp = into_response(backfill_data.as_ref(), key)?;
         } else {
-            resp = into_response(data, &key)?;
+            resp = into_response(data, key)?;
         }
         response.push(resp);
     }
@@ -59,7 +70,7 @@ fn parse_set_request(data_enum: api::SetMetaDataRequest) -> UserResult<types::Me
         api::SetMetaDataRequest::ProductionAgreement(req) => {
             let ip_address = req
                 .ip_address
-                .ok_or(UserErrors::InternalServerError.into())
+                .ok_or(report!(UserErrors::InternalServerError))
                 .attach_printable("Error Getting Ip Address")?;
             Ok(types::MetaData::ProductionAgreement(
                 types::ProductionAgreementValue {
@@ -105,6 +116,12 @@ fn parse_set_request(data_enum: api::SetMetaDataRequest) -> UserResult<types::Me
         api::SetMetaDataRequest::IsMultipleConfiguration => {
             Ok(types::MetaData::IsMultipleConfiguration(true))
         }
+        api::SetMetaDataRequest::IsChangePasswordRequired => {
+            Ok(types::MetaData::IsChangePasswordRequired(true))
+        }
+        api::SetMetaDataRequest::OnboardingSurvey(req) => {
+            Ok(types::MetaData::OnboardingSurvey(req))
+        }
     }
 }
 
@@ -131,12 +148,14 @@ fn parse_get_request(data_enum: api::GetMetaDataRequest) -> DBEnum {
         api::GetMetaDataRequest::ConfigureWoocom => DBEnum::ConfigureWoocom,
         api::GetMetaDataRequest::SetupWoocomWebhook => DBEnum::SetupWoocomWebhook,
         api::GetMetaDataRequest::IsMultipleConfiguration => DBEnum::IsMultipleConfiguration,
+        api::GetMetaDataRequest::IsChangePasswordRequired => DBEnum::IsChangePasswordRequired,
+        api::GetMetaDataRequest::OnboardingSurvey => DBEnum::OnboardingSurvey,
     }
 }
 
 fn into_response(
     data: Option<&DashboardMetadata>,
-    data_type: &DBEnum,
+    data_type: DBEnum,
 ) -> UserResult<api::GetMetaDataResponse> {
     match data_type {
         DBEnum::ProductionAgreement => Ok(api::GetMetaDataResponse::ProductionAgreement(
@@ -207,11 +226,18 @@ fn into_response(
         DBEnum::IsMultipleConfiguration => Ok(api::GetMetaDataResponse::IsMultipleConfiguration(
             data.is_some(),
         )),
+        DBEnum::IsChangePasswordRequired => Ok(api::GetMetaDataResponse::IsChangePasswordRequired(
+            data.is_some(),
+        )),
+        DBEnum::OnboardingSurvey => {
+            let resp = utils::deserialize_to_response(data)?;
+            Ok(api::GetMetaDataResponse::OnboardingSurvey(resp))
+        }
     }
 }
 
 async fn insert_metadata(
-    state: &AppState,
+    state: &SessionState,
     user: UserFromToken,
     metadata_key: DBEnum,
     metadata_value: types::MetaData,
@@ -425,6 +451,11 @@ async fn insert_metadata(
             metadata
         }
         types::MetaData::ProdIntent(data) => {
+            if let Some(poc_email) = &data.poc_email {
+                let inner_poc_email = poc_email.peek().as_str();
+                pii::Email::from_str(inner_poc_email)
+                    .change_context(UserErrors::EmailParsingError)?;
+            }
             let mut metadata = utils::insert_user_scoped_metadata_to_db(
                 state,
                 user.user_id.clone(),
@@ -439,8 +470,8 @@ async fn insert_metadata(
                 metadata = utils::update_user_scoped_metadata(
                     state,
                     user.user_id.clone(),
-                    user.merchant_id,
-                    user.org_id,
+                    user.merchant_id.clone(),
+                    user.org_id.clone(),
                     metadata_key,
                     data.clone(),
                 )
@@ -450,16 +481,37 @@ async fn insert_metadata(
 
             #[cfg(feature = "email")]
             {
-                if utils::is_prod_email_required(&data) {
-                    let email_contents = email_types::BizEmailProd::new(state, data)?;
+                let user_data = user.get_user_from_db(state).await?;
+                let user_email = domain::UserEmail::from_pii_email(user_data.get_email())
+                    .change_context(UserErrors::InternalServerError)?
+                    .get_secret()
+                    .expose();
+
+                if utils::is_prod_email_required(&data, user_email) {
+                    let theme = theme_utils::get_most_specific_theme_using_token_and_min_entity(
+                        state,
+                        &user,
+                        EntityType::Merchant,
+                    )
+                    .await?;
+
+                    let email_contents = email_types::BizEmailProd::new(
+                        state,
+                        data,
+                        theme.as_ref().map(|theme| theme.theme_id.clone()),
+                        theme
+                            .map(|theme| theme.email_config())
+                            .unwrap_or(state.conf.theme.email_config.clone()),
+                    )?;
                     let send_email_result = state
                         .email_client
                         .compose_and_send_email(
+                            email_types::get_base_url(state),
                             Box::new(email_contents),
                             state.conf.proxy.https_url.as_ref(),
                         )
                         .await;
-                    logger::info!(?send_email_result);
+                    logger::info!(prod_intent_email=?send_email_result);
                 }
             }
 
@@ -520,11 +572,33 @@ async fn insert_metadata(
             )
             .await
         }
+        types::MetaData::IsChangePasswordRequired(data) => {
+            utils::insert_user_scoped_metadata_to_db(
+                state,
+                user.user_id,
+                user.merchant_id,
+                user.org_id,
+                metadata_key,
+                data,
+            )
+            .await
+        }
+        types::MetaData::OnboardingSurvey(data) => {
+            utils::insert_merchant_scoped_metadata_to_db(
+                state,
+                user.user_id,
+                user.merchant_id,
+                user.org_id,
+                metadata_key,
+                data,
+            )
+            .await
+        }
     }
 }
 
 async fn fetch_metadata(
-    state: &AppState,
+    state: &SessionState,
     user: &UserFromToken,
     metadata_keys: Vec<DBEnum>,
 ) -> UserResult<Vec<DashboardMetadata>> {
@@ -558,14 +632,16 @@ async fn fetch_metadata(
     Ok(dashboard_metadata)
 }
 
+#[cfg(feature = "v1")]
 pub async fn backfill_metadata(
-    state: &AppState,
+    state: &SessionState,
     user: &UserFromToken,
     key: &DBEnum,
 ) -> UserResult<Option<DashboardMetadata>> {
     let key_store = state
         .store
         .get_merchant_key_store_by_merchant_id(
+            &state.into(),
             &user.merchant_id,
             &state.store.get_master_key().to_vec().into(),
         )
@@ -605,7 +681,7 @@ pub async fn backfill_metadata(
                     user.to_owned(),
                     DBEnum::StripeConnected,
                     types::MetaData::StripeConnected(api::ProcessorConnected {
-                        processor_id: mca.merchant_connector_id,
+                        processor_id: mca.get_id(),
                         processor_name: mca.connector_name,
                     }),
                 )
@@ -645,7 +721,7 @@ pub async fn backfill_metadata(
                     user.to_owned(),
                     DBEnum::PaypalConnected,
                     types::MetaData::PaypalConnected(api::ProcessorConnected {
-                        processor_id: mca.merchant_connector_id,
+                        processor_id: mca.get_id(),
                         processor_name: mca.connector_name,
                     }),
                 )
@@ -658,22 +734,34 @@ pub async fn backfill_metadata(
 }
 
 pub async fn get_merchant_connector_account_by_name(
-    state: &AppState,
-    merchant_id: &str,
+    state: &SessionState,
+    merchant_id: &common_utils::id_type::MerchantId,
     connector_name: &str,
     key_store: &MerchantKeyStore,
-) -> UserResult<Option<crate::types::domain::MerchantConnectorAccount>> {
-    state
-        .store
-        .find_merchant_connector_account_by_merchant_id_connector_name(
-            merchant_id,
-            connector_name,
-            key_store,
-        )
-        .await
-        .map_err(|e| {
-            e.change_context(UserErrors::InternalServerError)
-                .attach_printable("DB Error Fetching DashboardMetaData")
-        })
-        .map(|data| data.first().cloned())
+) -> UserResult<Option<domain::MerchantConnectorAccount>> {
+    #[cfg(feature = "v1")]
+    {
+        state
+            .store
+            .find_merchant_connector_account_by_merchant_id_connector_name(
+                &state.into(),
+                merchant_id,
+                connector_name,
+                key_store,
+            )
+            .await
+            .map_err(|e| {
+                e.change_context(UserErrors::InternalServerError)
+                    .attach_printable("DB Error Fetching DashboardMetaData")
+            })
+            .map(|data| data.first().cloned())
+    }
+    #[cfg(feature = "v2")]
+    {
+        let _ = state;
+        let _ = merchant_id;
+        let _ = connector_name;
+        let _ = key_store;
+        todo!()
+    }
 }

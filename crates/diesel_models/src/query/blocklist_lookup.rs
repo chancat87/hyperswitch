@@ -1,5 +1,4 @@
 use diesel::{associations::HasTable, BoolExpressionMethods, ExpressionMethods};
-use router_env::{instrument, tracing};
 
 use super::generics;
 use crate::{
@@ -9,17 +8,15 @@ use crate::{
 };
 
 impl BlocklistLookupNew {
-    #[instrument(skip(conn))]
     pub async fn insert(self, conn: &PgPooledConn) -> StorageResult<BlocklistLookup> {
         generics::generic_insert(conn, self).await
     }
 }
 
 impl BlocklistLookup {
-    #[instrument(skip(conn))]
     pub async fn find_by_merchant_id_fingerprint(
         conn: &PgPooledConn,
-        merchant_id: &str,
+        merchant_id: &common_utils::id_type::MerchantId,
         fingerprint: &str,
     ) -> StorageResult<Self> {
         generics::generic_find_one::<<Self as HasTable>::Table, _, _>(
@@ -31,10 +28,9 @@ impl BlocklistLookup {
         .await
     }
 
-    #[instrument(skip(conn))]
     pub async fn delete_by_merchant_id_fingerprint(
         conn: &PgPooledConn,
-        merchant_id: &str,
+        merchant_id: &common_utils::id_type::MerchantId,
         fingerprint: &str,
     ) -> StorageResult<Self> {
         generics::generic_delete_one_with_result::<<Self as HasTable>::Table, _, _>(

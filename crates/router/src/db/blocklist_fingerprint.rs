@@ -1,4 +1,4 @@
-use error_stack::IntoReport;
+use error_stack::report;
 use router_env::{instrument, tracing};
 use storage_impl::MockDb;
 
@@ -19,7 +19,7 @@ pub trait BlocklistFingerprintInterface {
 
     async fn find_blocklist_fingerprint_by_merchant_id_fingerprint_id(
         &self,
-        merchant_id: &str,
+        merchant_id: &common_utils::id_type::MerchantId,
         fingerprint_id: &str,
     ) -> CustomResult<storage::BlocklistFingerprint, errors::StorageError>;
 }
@@ -35,13 +35,13 @@ impl BlocklistFingerprintInterface for Store {
         pm_fingerprint_new
             .insert(&conn)
             .await
-            .map_err(Into::into)
-            .into_report()
+            .map_err(|error| report!(errors::StorageError::from(error)))
     }
 
+    #[instrument(skip_all)]
     async fn find_blocklist_fingerprint_by_merchant_id_fingerprint_id(
         &self,
-        merchant_id: &str,
+        merchant_id: &common_utils::id_type::MerchantId,
         fingerprint_id: &str,
     ) -> CustomResult<storage::BlocklistFingerprint, errors::StorageError> {
         let conn = connection::pg_connection_write(self).await?;
@@ -51,14 +51,12 @@ impl BlocklistFingerprintInterface for Store {
             fingerprint_id,
         )
         .await
-        .map_err(Into::into)
-        .into_report()
+        .map_err(|error| report!(errors::StorageError::from(error)))
     }
 }
 
 #[async_trait::async_trait]
 impl BlocklistFingerprintInterface for MockDb {
-    #[instrument(skip_all)]
     async fn insert_blocklist_fingerprint_entry(
         &self,
         _pm_fingerprint_new: storage::BlocklistFingerprintNew,
@@ -68,7 +66,7 @@ impl BlocklistFingerprintInterface for MockDb {
 
     async fn find_blocklist_fingerprint_by_merchant_id_fingerprint_id(
         &self,
-        _merchant_id: &str,
+        _merchant_id: &common_utils::id_type::MerchantId,
         _fingerprint_id: &str,
     ) -> CustomResult<storage::BlocklistFingerprint, errors::StorageError> {
         Err(errors::StorageError::MockDbError)?
@@ -87,9 +85,10 @@ impl BlocklistFingerprintInterface for KafkaStore {
             .await
     }
 
+    #[instrument(skip_all)]
     async fn find_blocklist_fingerprint_by_merchant_id_fingerprint_id(
         &self,
-        merchant_id: &str,
+        merchant_id: &common_utils::id_type::MerchantId,
         fingerprint: &str,
     ) -> CustomResult<storage::BlocklistFingerprint, errors::StorageError> {
         self.diesel_store

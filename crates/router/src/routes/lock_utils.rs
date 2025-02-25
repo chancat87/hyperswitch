@@ -6,6 +6,7 @@ pub enum ApiIdentifier {
     Payments,
     Refunds,
     Webhooks,
+    Organization,
     MerchantAccount,
     MerchantConnector,
     Configs,
@@ -20,7 +21,7 @@ pub enum ApiIdentifier {
     CardsInfo,
     Files,
     Cache,
-    Business,
+    Profile,
     Verification,
     ApiKeys,
     PaymentLink,
@@ -29,10 +30,17 @@ pub enum ApiIdentifier {
     Forex,
     RustLockerMigration,
     Gsm,
+    Role,
     User,
     UserRole,
     ConnectorOnboarding,
     Recon,
+    Poll,
+    ApplePayCertificatesMigration,
+    Relay,
+    Documentation,
+    Hypersense,
+    PaymentMethodsSession,
 }
 
 impl From<Flow> for ApiIdentifier {
@@ -42,7 +50,13 @@ impl From<Flow> for ApiIdentifier {
             | Flow::MerchantsAccountRetrieve
             | Flow::MerchantsAccountUpdate
             | Flow::MerchantsAccountDelete
-            | Flow::MerchantAccountList => Self::MerchantAccount,
+            | Flow::MerchantTransferKey
+            | Flow::MerchantAccountList
+            | Flow::EnablePlatformAccount => Self::MerchantAccount,
+
+            Flow::OrganizationCreate | Flow::OrganizationRetrieve | Flow::OrganizationUpdate => {
+                Self::Organization
+            }
 
             Flow::RoutingCreateConfig
             | Flow::RoutingLinkConfig
@@ -56,13 +70,17 @@ impl From<Flow> for ApiIdentifier {
             | Flow::RoutingDeleteConfig
             | Flow::DecisionManagerDeleteConfig
             | Flow::DecisionManagerRetrieveConfig
-            | Flow::DecisionManagerUpsertConfig => Self::Routing,
+            | Flow::ToggleDynamicRouting
+            | Flow::UpdateDynamicRoutingConfigs
+            | Flow::DecisionManagerUpsertConfig
+            | Flow::VolumeSplitOnRoutingType => Self::Routing,
 
             Flow::RetrieveForexFlow => Self::Forex,
 
             Flow::AddToBlocklist => Self::Blocklist,
             Flow::DeleteFromBlocklist => Self::Blocklist,
             Flow::ListBlocklist => Self::Blocklist,
+            Flow::ToggleBlocklistGuard => Self::Blocklist,
 
             Flow::MerchantConnectorsCreate
             | Flow::MerchantConnectorsRetrieve
@@ -73,6 +91,7 @@ impl From<Flow> for ApiIdentifier {
             Flow::ConfigKeyCreate
             | Flow::ConfigKeyFetch
             | Flow::ConfigKeyUpdate
+            | Flow::ConfigKeyDelete
             | Flow::CreateConfigKey => Self::Configs,
 
             Flow::CustomersCreate
@@ -84,21 +103,27 @@ impl From<Flow> for ApiIdentifier {
 
             Flow::EphemeralKeyCreate | Flow::EphemeralKeyDelete => Self::Ephemeral,
 
-            Flow::DeepHealthCheck => Self::Health,
+            Flow::DeepHealthCheck | Flow::HealthCheck => Self::Health,
             Flow::MandatesRetrieve | Flow::MandatesRevoke | Flow::MandatesList => Self::Mandates,
 
             Flow::PaymentMethodsCreate
+            | Flow::PaymentMethodsMigrate
             | Flow::PaymentMethodsList
             | Flow::CustomerPaymentMethodsList
             | Flow::PaymentMethodsRetrieve
             | Flow::PaymentMethodsUpdate
             | Flow::PaymentMethodsDelete
-            | Flow::ValidatePaymentMethod => Self::PaymentMethods,
+            | Flow::PaymentMethodCollectLink
+            | Flow::ValidatePaymentMethod
+            | Flow::ListCountriesCurrencies
+            | Flow::DefaultPaymentMethodsSet
+            | Flow::PaymentMethodSave => Self::PaymentMethods,
 
             Flow::PmAuthLinkTokenCreate | Flow::PmAuthExchangeToken => Self::PaymentMethodAuth,
 
             Flow::PaymentsCreate
             | Flow::PaymentsRetrieve
+            | Flow::PaymentsRetrieveForceSync
             | Flow::PaymentsUpdate
             | Flow::PaymentsConfirm
             | Flow::PaymentsCapture
@@ -108,22 +133,53 @@ impl From<Flow> for ApiIdentifier {
             | Flow::PaymentsSessionToken
             | Flow::PaymentsStart
             | Flow::PaymentsList
+            | Flow::PaymentsFilters
+            | Flow::PaymentsAggregate
             | Flow::PaymentsRedirect
-            | Flow::PaymentsIncrementalAuthorization => Self::Payments,
+            | Flow::PaymentsIncrementalAuthorization
+            | Flow::PaymentsExternalAuthentication
+            | Flow::PaymentsAuthorize
+            | Flow::GetExtendedCardInfo
+            | Flow::PaymentsCompleteAuthorize
+            | Flow::PaymentsManualUpdate
+            | Flow::SessionUpdateTaxCalculation
+            | Flow::PaymentsConfirmIntent
+            | Flow::PaymentsCreateIntent
+            | Flow::PaymentsGetIntent
+            | Flow::PaymentsPostSessionTokens
+            | Flow::PaymentsUpdateIntent
+            | Flow::PaymentsCreateAndConfirmIntent
+            | Flow::PaymentStartRedirection
+            | Flow::PaymentsRetrieveUsingMerchantReferenceId => Self::Payments,
 
             Flow::PayoutsCreate
             | Flow::PayoutsRetrieve
             | Flow::PayoutsUpdate
             | Flow::PayoutsCancel
             | Flow::PayoutsFulfill
-            | Flow::PayoutsAccounts => Self::Payouts,
+            | Flow::PayoutsList
+            | Flow::PayoutsFilter
+            | Flow::PayoutsAccounts
+            | Flow::PayoutsConfirm
+            | Flow::PayoutLinkInitiate => Self::Payouts,
 
             Flow::RefundsCreate
             | Flow::RefundsRetrieve
+            | Flow::RefundsRetrieveForceSync
             | Flow::RefundsUpdate
-            | Flow::RefundsList => Self::Refunds,
+            | Flow::RefundsList
+            | Flow::RefundsFilters
+            | Flow::RefundsAggregate
+            | Flow::RefundsManualUpdate => Self::Refunds,
+            Flow::Relay | Flow::RelayRetrieve => Self::Relay,
 
-            Flow::FrmFulfillment | Flow::IncomingWebhookReceive => Self::Webhooks,
+            Flow::FrmFulfillment
+            | Flow::IncomingWebhookReceive
+            | Flow::IncomingRelayWebhookReceive
+            | Flow::WebhookEventInitialDeliveryAttemptList
+            | Flow::WebhookEventDeliveryAttemptList
+            | Flow::WebhookEventDeliveryRetry
+            | Flow::RecoveryIncomingWebhookReceive => Self::Webhooks,
 
             Flow::ApiKeyCreate
             | Flow::ApiKeyRetrieve
@@ -133,9 +189,12 @@ impl From<Flow> for ApiIdentifier {
 
             Flow::DisputesRetrieve
             | Flow::DisputesList
+            | Flow::DisputesFilters
             | Flow::DisputesEvidenceSubmit
             | Flow::AttachDisputeEvidence
-            | Flow::RetrieveDisputeEvidence => Self::Disputes,
+            | Flow::RetrieveDisputeEvidence
+            | Flow::DisputesAggregate
+            | Flow::DeleteDisputeEvidence => Self::Disputes,
 
             Flow::CardsInfo => Self::CardsInfo,
 
@@ -143,14 +202,17 @@ impl From<Flow> for ApiIdentifier {
 
             Flow::CacheInvalidate => Self::Cache,
 
-            Flow::BusinessProfileCreate
-            | Flow::BusinessProfileUpdate
-            | Flow::BusinessProfileRetrieve
-            | Flow::BusinessProfileDelete
-            | Flow::BusinessProfileList => Self::Business,
+            Flow::ProfileCreate
+            | Flow::ProfileUpdate
+            | Flow::ProfileRetrieve
+            | Flow::ProfileDelete
+            | Flow::ProfileList
+            | Flow::ToggleExtendedCardInfo
+            | Flow::ToggleConnectorAgnosticMit => Self::Profile,
 
             Flow::PaymentLinkRetrieve
             | Flow::PaymentLinkInitiate
+            | Flow::PaymentSecureLinkInitiate
             | Flow::PaymentLinkList
             | Flow::PaymentLinkStatus => Self::PaymentLink,
 
@@ -162,39 +224,81 @@ impl From<Flow> for ApiIdentifier {
             | Flow::GsmRuleUpdate
             | Flow::GsmRuleDelete => Self::Gsm,
 
+            Flow::ApplePayCertificatesMigration => Self::ApplePayCertificatesMigration,
+
             Flow::UserConnectAccount
             | Flow::UserSignUp
-            | Flow::UserSignInWithoutInviteChecks
             | Flow::UserSignIn
             | Flow::Signout
             | Flow::ChangePassword
             | Flow::SetDashboardMetadata
-            | Flow::GetMutltipleDashboardMetadata
+            | Flow::GetMultipleDashboardMetadata
             | Flow::VerifyPaymentConnector
             | Flow::InternalUserSignup
-            | Flow::SwitchMerchant
+            | Flow::TenantUserCreate
+            | Flow::SwitchOrg
+            | Flow::SwitchMerchantV2
+            | Flow::SwitchProfile
+            | Flow::UserOrgMerchantCreate
             | Flow::UserMerchantAccountCreate
             | Flow::GenerateSampleData
             | Flow::DeleteSampleData
-            | Flow::UserMerchantAccountList
             | Flow::GetUserDetails
+            | Flow::GetUserRoleDetails
             | Flow::ForgotPassword
             | Flow::ResetPassword
-            | Flow::InviteUser
+            | Flow::RotatePassword
             | Flow::InviteMultipleUser
+            | Flow::ReInviteUser
             | Flow::UserSignUpWithMerchantId
-            | Flow::VerifyEmailWithoutInviteChecks
             | Flow::VerifyEmail
+            | Flow::AcceptInviteFromEmail
             | Flow::VerifyEmailRequest
-            | Flow::UpdateUserAccountDetails => Self::User,
+            | Flow::UpdateUserAccountDetails
+            | Flow::TotpBegin
+            | Flow::TotpReset
+            | Flow::TotpVerify
+            | Flow::TotpUpdate
+            | Flow::RecoveryCodeVerify
+            | Flow::RecoveryCodesGenerate
+            | Flow::TerminateTwoFactorAuth
+            | Flow::TwoFactorAuthStatus
+            | Flow::CreateUserAuthenticationMethod
+            | Flow::UpdateUserAuthenticationMethod
+            | Flow::ListUserAuthenticationMethods
+            | Flow::UserTransferKey
+            | Flow::GetSsoAuthUrl
+            | Flow::SignInWithSso
+            | Flow::ListOrgForUser
+            | Flow::ListMerchantsForUserInOrg
+            | Flow::ListProfileForUserInOrgAndMerchant
+            | Flow::ListInvitationsForUser
+            | Flow::AuthSelect
+            | Flow::GetThemeUsingLineage
+            | Flow::GetThemeUsingThemeId
+            | Flow::UploadFileToThemeStorage
+            | Flow::CreateTheme
+            | Flow::UpdateTheme
+            | Flow::DeleteTheme => Self::User,
 
-            Flow::ListRoles
+            Flow::ListRolesV2
+            | Flow::ListInvitableRolesAtEntityLevel
+            | Flow::ListUpdatableRolesAtEntityLevel
             | Flow::GetRole
+            | Flow::GetRoleV2
             | Flow::GetRoleFromToken
+            | Flow::GetRoleFromTokenV2
             | Flow::UpdateUserRole
             | Flow::GetAuthorizationInfo
-            | Flow::AcceptInvitation
-            | Flow::DeleteUserRole => Self::UserRole,
+            | Flow::GetRolesInfo
+            | Flow::GetParentGroupInfo
+            | Flow::AcceptInvitationsV2
+            | Flow::AcceptInvitationsPreAuth
+            | Flow::DeleteUserRole
+            | Flow::CreateRole
+            | Flow::UpdateRole
+            | Flow::UserFromEmail
+            | Flow::ListUsersInLineage => Self::UserRole,
 
             Flow::GetActionUrl | Flow::SyncOnboardingStatus | Flow::ResetTrackingId => {
                 Self::ConnectorOnboarding
@@ -204,6 +308,18 @@ impl From<Flow> for ApiIdentifier {
             | Flow::ReconTokenRequest
             | Flow::ReconServiceRequest
             | Flow::ReconVerifyToken => Self::Recon,
+
+            Flow::RetrievePollStatus => Self::Poll,
+
+            Flow::FeatureMatrix => Self::Documentation,
+
+            Flow::HypersenseTokenRequest
+            | Flow::HypersenseVerifyToken
+            | Flow::HypersenseSignoutToken => Self::Hypersense,
+
+            Flow::PaymentMethodSessionCreate
+            | Flow::PaymentMethodSessionRetrieve
+            | Flow::PaymentMethodSessionUpdateSavedPaymentMethod => Self::PaymentMethodsSession,
         }
     }
 }
