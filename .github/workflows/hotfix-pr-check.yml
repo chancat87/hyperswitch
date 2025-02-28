@@ -13,6 +13,10 @@ jobs:
   hotfix_pr_check:
     name: Verify Hotfix PR
     runs-on: ubuntu-latest
+    env:
+      HOTFIX_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      HOTFIX_PR_TITLE: ${{ github.event.pull_request.title }}
+      HOTFIX_PR_NEEDS_MAIN_BRANCH_PR_MERGED: ${{ vars.HOTFIX_PR_NEEDS_MAIN_BRANCH_PR_MERGED }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,8 +34,8 @@ jobs:
           # Extract a list of lines with the format 'juspay/hyperswitch/pull/1200' or '#1200' using 'sed'.
           # If empty, then error out and exit.
           # else, use 'grep' to extract out 'juspay/hyperswitch/pull/1200' or '#1200' patterns from each line.
-          # Use 'sed' to remove the part of the matched strings that precedes the last "/" character (in cases like, juspay/hyperswitch/pull/1200 - 1200) 
-          # and sed again to remove any "#" characters from the extracted numeric part (in cases like #1200 - 1200), ultimately getting PR/issue number. 
+          # Use 'sed' to remove the part of the matched strings that precedes the last "/" character (in cases like, juspay/hyperswitch/pull/1200 - 1200)
+          # and sed again to remove any "#" characters from the extracted numeric part (in cases like #1200 - 1200), ultimately getting PR/issue number.
           # Finally, remove (if any) duplicates from the list
 
           SED_OUTPUT=$(sed -E '/\/juspay\/hyperswitch\/pull\/[0-9]+|#[0-9]+/!d' hotfix_pr_body.txt)
@@ -70,10 +74,11 @@ jobs:
               pr_base_ref=$(echo "${pr_info}" | jq -r '.baseRefName')
               pr_state=$(echo "${pr_info}" | jq -r '.state')
 
-              if [[ "${pr_author}" == "${{ github.event.pull_request.user.login }}" && \
-                    "${pr_title}" == "${{ github.event.pull_request.title }}" && \
-                    "${pr_base_ref}" == "main" && \
-                    "${pr_state}" == "MERGED" ]]; then
+              if [[ "${pr_author}" == "${HOTFIX_PR_AUTHOR}" &&
+                    "${pr_title}" == "${HOTFIX_PR_TITLE}" &&
+                    "${pr_base_ref}" == "main" &&
+                    (("${HOTFIX_PR_NEEDS_MAIN_BRANCH_PR_MERGED}" == 'true' && "${pr_state}" == "MERGED") ||
+                     ("${HOTFIX_PR_NEEDS_MAIN_BRANCH_PR_MERGED}" != 'true')) ]]; then
 
                 all_checks_failed=0
                 break
@@ -83,7 +88,6 @@ jobs:
               PR_TITLES+=("$pr_title")
               PR_BASE_REFS+=("$pr_base_ref")
               PR_STATES+=("$pr_state")
-              
             fi
           done
 
@@ -93,7 +97,7 @@ jobs:
             author_match_found=0
 
             for ((i = 0; i < ${#PR_AUTHORS[@]}; i++)); do
-              if [[ "${{github.event.pull_request.user.login}}" == "${PR_AUTHORS[i]}" ]]; then
+              if [[ "${HOTFIX_PR_AUTHOR}" == "${PR_AUTHORS[i]}" ]]; then
                 # If a match is found, set the flag to 1 and break out of the loop
                 author_match_found=1
                 break
@@ -101,7 +105,7 @@ jobs:
             done
 
             if [[ $author_match_found -eq 0 ]]; then
-              echo "::error::Hotfix PR author does not match any of the Original PR authors. Hotfix PR author: '${{ github.event.pull_request.user.login }}'"
+              echo "::error::Hotfix PR author does not match any of the Original PR authors. Hotfix PR author: '${HOTFIX_PR_AUTHOR}'"
             fi
 
 
@@ -109,7 +113,7 @@ jobs:
             title_match_found=0
 
             for ((i = 0; i < ${#PR_TITLES[@]}; i++)); do
-              if [[ "${{github.event.pull_request.title}}" == "${PR_TITLES[i]}" ]]; then
+              if [[ "${HOTFIX_PR_TITLE}" == "${PR_TITLES[i]}" ]]; then
                 # If a match is found, set the flag to 1 and break out of the loop
                 title_match_found=1
                 break
@@ -117,7 +121,7 @@ jobs:
             done
 
             if [[ $title_match_found -eq 0 ]]; then
-              echo "::error::Hotfix PR title does not match any of the Original PR titles. Hotfix PR title: '${{ github.event.pull_request.title }}'"
+              echo "::error::Hotfix PR title does not match any of the Original PR titles. Hotfix PR title: '${HOTFIX_PR_TITLE}'"
             fi
 
 
@@ -137,19 +141,21 @@ jobs:
             fi
 
 
-            # Set a flag to track if any of the original PR's state is 'MERGED'
-            original_pr_merged=0
+            if [[ "${HOTFIX_PR_NEEDS_MAIN_BRANCH_PR_MERGED}" == 'true' ]]; then
+              # Set a flag to track if any of the original PR's state is 'MERGED'
+              original_pr_merged=0
 
-            for ((i = 0; i < ${#PR_STATES[@]}; i++)); do
-              if [[ "${PR_STATES[i]}" == "MERGED" ]]; then
-                # If a match is found, set the flag to 1 and break out of the loop
-                original_pr_merged=1
-                break
+              for ((i = 0; i < ${#PR_STATES[@]}; i++)); do
+                if [[ "${PR_STATES[i]}" == "MERGED" ]]; then
+                  # If a match is found, set the flag to 1 and break out of the loop
+                  original_pr_merged=1
+                  break
+                fi
+              done
+
+              if [[ $original_pr_merged -eq 0 ]]; then
+                echo "::error::None of the Original PR is merged"
               fi
-            done
-
-            if [[ $original_pr_merged -eq 0 ]]; then
-              echo "::error::None of the Original PR is merged"
             fi
 
             # Print all Original PR's (number), (pr_title), (pr_author), (pr_base_ref) and (pr_state)
